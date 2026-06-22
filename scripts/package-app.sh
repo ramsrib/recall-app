@@ -32,16 +32,30 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <key>CFBundleDisplayName</key><string>${APP_NAME}</string>
     <key>CFBundleIdentifier</key><string>${BUNDLE_ID}</string>
     <key>CFBundleExecutable</key><string>RecallApp</string>
+    <key>CFBundleIconFile</key><string>AppIcon</string>
+    <key>CFBundleIconName</key><string>AppIcon</string>
     <key>CFBundlePackageType</key><string>APPL</string>
     <key>CFBundleShortVersionString</key><string>${VERSION}</string>
     <key>CFBundleVersion</key><string>1</string>
     <key>LSMinimumSystemVersion</key><string>14.0</string>
     <key>NSPrincipalClass</key><string>NSApplication</string>
     <key>NSHighResolutionCapable</key><true/>
+    <key>NSAccentColorName</key><string>AccentColor</string>
     <key>LSApplicationCategoryType</key><string>public.app-category.developer-tools</string>
 </dict>
 </plist>
 PLIST
+
+# Compile the asset catalog into the bundle so the app icon and accent color
+# are available to AppKit at runtime.
+if [[ -d Assets.xcassets ]]; then
+    xcrun actool Assets.xcassets \
+        --compile "$APP/Contents/Resources" \
+        --platform macosx --minimum-deployment-target 14.0 \
+        --app-icon AppIcon \
+        --output-partial-info-plist "$(mktemp)" >/dev/null 2>&1 \
+        || echo "  (actool skipped - bundled assets won't apply)"
+fi
 
 # Ad-hoc sign so Gatekeeper lets it run locally.
 codesign --force --deep --sign - "$APP" >/dev/null 2>&1 || \

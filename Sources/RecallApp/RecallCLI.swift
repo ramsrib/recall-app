@@ -10,23 +10,17 @@ enum RecallError: LocalizedError {
         switch self {
         case .notFound:
             return "The `recall` CLI was not found. Install it (run `make install` in the recall repo) so it lands in ~/.local/bin."
-        case .cli(let msg):
-            return msg
-        case .exit(let code):
-            return "recall exited with status \(code)."
-        case .decode(let msg):
-            return "Couldn't read recall's output: \(msg)"
+        case .cli(let msg): return msg
+        case .exit(let code): return "recall exited with status \(code)."
+        case .decode(let msg): return "Couldn't read recall's output: \(msg)"
         }
     }
 }
 
-/// Thin wrapper that drives the installed `recall` binary as a sidecar.
-/// All search semantics (hybrid/semantic/lexical/all) come straight from the
-/// CLI, so the app and the CLI can never disagree on what a search means.
+/// Drives the installed `recall` binary. The app is a thin client over the CLI —
+/// list / summary / pin / resume all come straight from it, so the GUI and the
+/// terminal never disagree.
 struct RecallCLI {
-
-    /// Absolute path to the recall binary. A .app launched from Finder gets a
-    /// minimal PATH (no ~/.local/bin), so we resolve an absolute path here.
     let binaryPath: String?
 
     init() {
@@ -41,37 +35,34 @@ struct RecallCLI {
 
     var isAvailable: Bool { binaryPath != nil }
 
-    // MARK: Search
+    // MARK: Commands
 
-    func search(query: String, mode: SearchMode, source: String?,
-                project: String?, limit: Int) async throws -> [SearchResult] {
-        guard let bin = binaryPath else { throw RecallError.notFound }
-
-        var args: [String] = [query]
-        switch mode {
-        case .all:
-            args.append("--all")
-        default:
-            args += ["--mode", mode.rawValue]
-        }
-        if let source { args += ["--source", source] }
-        if let project, !project.isEmpty { args += ["--project", project] }
-        args += ["--limit", String(limit)]
-
-        let result = try await capture(bin, args)
-        if result.code != 0 {
-            let msg = result.stderr.trimmingCharacters(in: .whitespacesAndNewlines)
-            throw RecallError.cli(msg.isEmpty ? "recall exited with status \(result.code)" : msg)
-        }
-        guard !result.stdout.isEmpty else { return [] }
-        do {
-            return try JSONDecoder().decode([SearchResult].self, from: result.stdout)
-        } catch {
-            throw RecallError.decode(error.localizedDescription)
-        }
+    func list() async throws -> [SessionMeta] {
+        // Ask for every mode (interactive + exec); the app hides exec by default
+        // and reveals it via the Automation filter, so it needs the full set.
+        let data = try await run(["list", "--mode", "all"])
+        return try decode([SessionMeta].self, data)
     }
 
-    // MARK: Index (streams progress lines from stderr)
+    /// Generate (or fetch cached) summary. First generation shells out to codex
+    /// and can take several seconds; cached calls return immediately.
+    func summary(_ sessionID: String, refresh: Bool = false,
+                 cachedOnly: Bool = false) async throws -> SummaryResult {
+        var args = ["summary", sessionID]
+        if refresh { args.append("--refresh") }
+        if cachedOnly { args.append("--cached-only") }   // never generates; empty if no cache
+        let data = try await run(args)
+        return try decode(SummaryResult.self, data)
+    }
+
+    func setPinned(_ sessionID: String, _ pinned: Bool) async throws {
+        _ = try await run([pinned ? "pin" : "unpin", sessionID])
+    }
+
+    func resume(_ sessionID: String) async throws -> ResumeInfo {
+        let data = try await run(["resume", sessionID])
+        return try decode(ResumeInfo.self, data)
+    }
 
     func index(progress: @escaping @Sendable (String) -> Void) async throws {
         guard let bin = binaryPath else { throw RecallError.notFound }
@@ -82,26 +73,38 @@ struct RecallCLI {
             let errPipe = Pipe()
             proc.standardError = errPipe
             proc.standardOutput = Pipe()
-
             let buffer = LineBuffer(onLine: progress)
-            errPipe.fileHandleForReading.readabilityHandler = { handle in
-                let data = handle.availableData
-                if !data.isEmpty { buffer.append(data) }
+            errPipe.fileHandleForReading.readabilityHandler = { h in
+                let d = h.availableData
+                if !d.isEmpty { buffer.append(d) }
             }
             proc.terminationHandler = { p in
                 errPipe.fileHandleForReading.readabilityHandler = nil
                 buffer.flush()
-                if p.terminationStatus == 0 {
-                    cont.resume()
-                } else {
-                    cont.resume(throwing: RecallError.exit(Int(p.terminationStatus)))
-                }
+                p.terminationStatus == 0
+                    ? cont.resume()
+                    : cont.resume(throwing: RecallError.exit(Int(p.terminationStatus)))
             }
             do { try proc.run() } catch { cont.resume(throwing: error) }
         }
     }
 
-    // MARK: Process plumbing
+    // MARK: Plumbing
+
+    private func decode<T: Decodable>(_ type: T.Type, _ data: Data) throws -> T {
+        do { return try JSONDecoder().decode(T.self, from: data) }
+        catch { throw RecallError.decode(error.localizedDescription) }
+    }
+
+    private func run(_ args: [String]) async throws -> Data {
+        guard let bin = binaryPath else { throw RecallError.notFound }
+        let result = try await capture(bin, args)
+        if result.code != 0 {
+            let msg = result.stderr.trimmingCharacters(in: .whitespacesAndNewlines)
+            throw RecallError.cli(msg.isEmpty ? "recall exited with status \(result.code)" : msg)
+        }
+        return result.stdout
+    }
 
     private func capture(_ bin: String, _ args: [String]) async throws
         -> (stdout: Data, stderr: String, code: Int32) {
@@ -109,13 +112,10 @@ struct RecallCLI {
             let proc = Process()
             proc.executableURL = URL(fileURLWithPath: bin)
             proc.arguments = args
-
             let outPipe = Pipe()
             let errPipe = Pipe()
             proc.standardOutput = outPipe
             proc.standardError = errPipe
-
-            // Buffer both streams via handlers so a full pipe never deadlocks.
             let sink = DataSink()
             outPipe.fileHandleForReading.readabilityHandler = { h in
                 let d = h.availableData; if !d.isEmpty { sink.appendOut(d) }
@@ -138,7 +138,6 @@ struct RecallCLI {
     }
 }
 
-/// Thread-safe accumulator for the two process streams.
 private final class DataSink: @unchecked Sendable {
     private let lock = NSLock()
     private var out = Data()
@@ -148,7 +147,6 @@ private final class DataSink: @unchecked Sendable {
     func snapshot() -> (Data, Data) { lock.lock(); defer { lock.unlock() }; return (out, err) }
 }
 
-/// Splits a byte stream into newline-delimited lines and forwards each.
 private final class LineBuffer: @unchecked Sendable {
     private let lock = NSLock()
     private var buf = Data()
@@ -170,8 +168,6 @@ private final class LineBuffer: @unchecked Sendable {
     func flush() {
         lock.lock(); let rest = buf; buf.removeAll(); lock.unlock()
         if let s = String(data: rest, encoding: .utf8),
-           !s.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            onLine(s)
-        }
+           !s.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { onLine(s) }
     }
 }

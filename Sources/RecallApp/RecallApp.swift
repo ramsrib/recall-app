@@ -7,16 +7,27 @@ struct RecallApp: App {
     @StateObject private var state = AppState()
 
     var body: some Scene {
-        WindowGroup("Recall") {
+        WindowGroup {
             ContentView()
                 .environmentObject(state)
                 .frame(minWidth: 1000, minHeight: 640)
         }
+        .windowStyle(.hiddenTitleBar)
         .windowToolbarStyle(.unified)
         .commands {
             CommandGroup(after: .toolbar) {
                 Button("Reindex Sessions") { state.reindex() }
                     .keyboardShortcut("r", modifiers: [.command, .shift])
+            }
+            CommandGroup(after: .textEditing) {
+                Button("Find Sessions") { state.searchFocusRequested = true }
+                    .keyboardShortcut("k", modifiers: .command)
+            }
+            CommandGroup(after: .sidebar) {
+                Button(state.sidebarItem == .usage ? "Show Sessions" : "Show Usage") {
+                    state.sidebarItem = state.sidebarItem == .usage ? state.lastRealFilter : .usage
+                }
+                .keyboardShortcut("u", modifiers: .command)
             }
         }
     }
