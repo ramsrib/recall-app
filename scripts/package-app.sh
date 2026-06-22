@@ -42,6 +42,14 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <key>NSHighResolutionCapable</key><true/>
     <key>NSAccentColorName</key><string>AccentColor</string>
     <key>LSApplicationCategoryType</key><string>public.app-category.developer-tools</string>
+    <key>CFBundleURLTypes</key>
+    <array>
+      <dict>
+        <key>CFBundleURLName</key><string>${BUNDLE_ID}</string>
+        <key>CFBundleURLSchemes</key>
+        <array><string>recall</string></array>
+      </dict>
+    </array>
 </dict>
 </plist>
 PLIST

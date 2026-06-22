@@ -11,6 +11,8 @@ struct RecallApp: App {
             ContentView()
                 .environmentObject(state)
                 .frame(minWidth: 1000, minHeight: 640)
+                // Deep link: `recall://session/<id>` selects that thread.
+                .onOpenURL { state.handleDeepLink($0) }
         }
         .windowStyle(.hiddenTitleBar)
         .windowToolbarStyle(.unified)

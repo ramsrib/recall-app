@@ -156,6 +156,7 @@ Tarp tab. A clipboard fallback covers any edge case.
 | 2026-06-21 | Summaries via the **Codex CLI** (local, cached). |
 | 2026-06-21 | Resume via **Tarp local** tab-config / open-in-tab (cloud-free); never Oz cloud. |
 | 2026-06-21 | Design: **monochromatic, distraction-free**, keyboard-first. |
+| 2026-06-21 | **Deep links**: a `recall://session/<id>` URL scheme opens a thread by id. Consumer-only for now — the app handles incoming links; no in-app "Copy Link" or CLI link-emitter yet. |
 
 ## Open questions
 

@@ -1,5 +1,6 @@
 import Foundation
 import SwiftUI
+import AppKit
 
 @MainActor
 final class AppState: ObservableObject {
@@ -24,6 +25,10 @@ final class AppState: ObservableObject {
 
     // Selection
     @Published var selectedID: String?
+
+    /// A `recall://session/<id>` opened before the index finished loading.
+    /// Applied at the end of `load()` so it wins over the auto-select default.
+    private var pendingDeepLinkID: String?
 
     // Glance summary
     @Published var summary: String?
@@ -133,8 +138,12 @@ final class AppState: ObservableObject {
             var seen = Set<String>()
             sessions = try await cli.list().filter { seen.insert($0.sessionID).inserted }
             statusLine = "\(sessions.count) sessions"
-            // Open the most-recent thread on first load so the reader isn't empty.
-            if selectedID == nil, let first = groups("").first?.sessions.first {
+            // A deep link opened before the index loaded wins over the default.
+            if let pending = pendingDeepLinkID {
+                pendingDeepLinkID = nil
+                applyDeepLink(pending)
+            } else if selectedID == nil, let first = groups("").first?.sessions.first {
+                // Open the most-recent thread on first load so the reader isn't empty.
                 select(first.sessionID)
             }
         } catch {
@@ -163,6 +172,33 @@ final class AppState: ObservableObject {
             loadCachedSummary()
         }
         loadTranscript()
+    }
+
+    // MARK: Deep link  (recall://session/<id>)
+
+    /// Entry point for `.onOpenURL`. Selects the linked session, or stashes the
+    /// id to apply after the first `load()` when the app is launched cold.
+    func handleDeepLink(_ url: URL) {
+        guard url.scheme == "recall", url.host == "session" else { return }
+        let id = url.lastPathComponent
+        guard !id.isEmpty, id != "/" else { return }
+        NSApp.activate(ignoringOtherApps: true)
+        if sessions.isEmpty {
+            pendingDeepLinkID = id
+        } else {
+            applyDeepLink(id)
+        }
+    }
+
+    /// Reveal a session by id: switch to a filter that actually contains it (so
+    /// its row renders → the highlight and scroll-to can land), then select it.
+    private func applyDeepLink(_ id: String) {
+        guard let target = sessions.first(where: { $0.sessionID == id }) else {
+            statusLine = "Session not found"
+            return
+        }
+        sidebarItem = target.isExec ? .automation : .all
+        select(id)
     }
 
     // MARK: Glance summary

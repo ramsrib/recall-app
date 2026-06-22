@@ -17,10 +17,27 @@ disagree on what a search means.
 | **Search** | Runs `~/.local/bin/recall "<query>" --mode … --source … --limit 50` and decodes its JSON. Modes: Hybrid / Semantic / Lexical / All-keywords. |
 | **Read** | Full-parses the selected transcript and renders messages — prose as Markdown, fenced code in monospaced boxes, `thinking` / tool calls / tool results collapsible. |
 | **Reindex** | Streams `recall index` progress (⌘⇧R). |
+| **Deep link** | `recall://session/<id>` opens that thread — launching the app if it isn't running. |
 
 Semantic & Hybrid search need [Ollama](https://ollama.com) running (that's the
 CLI's requirement). If it's down, the app surfaces the error and offers a
 one-click fallback to Lexical, which needs nothing.
+
+## Deep links
+
+Open a specific session from anywhere — a terminal, a note, a script:
+
+```sh
+open "recall://session/<session-id>"
+```
+
+The app launches if it isn't already running, comes to the front, and selects
+that thread. If the session is hidden by the current filter (e.g. you're viewing
+Claude and the link points at a Codex session), the view switches to one that
+shows it. The id is the `session_id` that `recall list` prints.
+
+> The `recall://` scheme is registered only by the packaged app (`make app` /
+> `make install`), not by `make run` / `swift run`.
 
 ## Build & run
 
