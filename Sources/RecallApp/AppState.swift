@@ -35,6 +35,12 @@ final class AppState: ObservableObject {
     @Published var summaryLoading = false
     @Published var summaryError: String?
 
+    // Mentes tasks touched during the selected session (read from its sidecar
+    // on open). `mentesSessionIDs` is the set of sessions that HAVE a sidecar —
+    // a cheap existence check computed at load time, used only to badge the list.
+    @Published var mentesTasks: [MentesTask] = []
+    @Published var mentesSessionIDs: Set<String> = []
+
     // Transcript reader (auto-loaded on selection — it's free local parsing).
     // readerItems is the flattened/grouped view model, built off the main thread
     // so the reader never rebuilds it during render or scroll.
@@ -138,6 +144,17 @@ final class AppState: ObservableObject {
             var seen = Set<String>()
             sessions = try await cli.list().filter { seen.insert($0.sessionID).inserted }
             statusLine = "\(sessions.count) sessions"
+            // Badge sessions that have a Mentes sidecar — a cheap existence check
+            // per session (no file reads), done off-main so it never hitches.
+            let store = self.store
+            let pairs = sessions.map { ($0.sessionID, $0.path) }
+            mentesSessionIDs = await Task.detached(priority: .utility) {
+                var ids = Set<String>()
+                for (sid, path) in pairs where store.hasMentesSidecar(forTranscript: path) {
+                    ids.insert(sid)
+                }
+                return ids
+            }.value
             // A deep link opened before the index loaded wins over the default.
             if let pending = pendingDeepLinkID {
                 pendingDeepLinkID = nil
@@ -162,6 +179,7 @@ final class AppState: ObservableObject {
         summary = nil
         summaryError = nil
         summaryLoading = false
+        mentesTasks = []
         transcript = []
         readerItems = []
         // Show a cached summary immediately; NEVER auto-spend a codex call.
@@ -171,7 +189,27 @@ final class AppState: ObservableObject {
         if let s = selectedSession, s.hasSummary {
             loadCachedSummary()
         }
+        loadMentesTasks()
         loadTranscript()
+    }
+
+    // MARK: Mentes tasks
+
+    /// Read the Mentes tasks for the selected session straight from its sidecar
+    /// (off-main). No `recall` round-trip — the file is a sibling of a path the
+    /// app already has. Leaves the list empty when there's no sidecar.
+    func loadMentesTasks() {
+        guard let s = selectedSession else { return }
+        let store = self.store
+        let path = s.path
+        let id = s.sessionID
+        Task {
+            let tasks = await Task.detached(priority: .userInitiated) {
+                store.mentesTasks(forTranscript: path)
+            }.value
+            guard self.selectedID == id else { return }
+            self.mentesTasks = tasks
+        }
     }
 
     // MARK: Deep link  (recall://session/<id>)

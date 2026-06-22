@@ -120,6 +120,56 @@ struct SessionStore: Sendable {
         }
     }
 
+    // MARK: Mentes sidecar
+
+    /// Whether a session has a `<id>.mentes.jsonl` sidecar (i.e. it touched
+    /// Mentes tasks). A pure existence check — the file is NOT read; this just
+    /// drives the list badge. The details are read on open via `mentesTasks`.
+    func hasMentesSidecar(forTranscript path: String) -> Bool {
+        FileManager.default.fileExists(atPath: mentesSidecarPath(path))
+    }
+
+    /// Read the `<id>.mentes.jsonl` sidecar and return the distinct tasks the
+    /// session touched, newest activity first. Read on session open, never during
+    /// listing. Empty when there's no sidecar.
+    func mentesTasks(forTranscript path: String) -> [MentesTask] {
+        guard let data = FileManager.default.contents(atPath: mentesSidecarPath(path)),
+              let text = String(data: data, encoding: .utf8) else { return [] }
+        struct Agg { var action: String; var date: Date; var events: Int; var order: Int }
+        var byID: [String: Agg] = [:]
+        var order = 0
+        text.enumerateLines { line, _ in
+            guard let obj = jsonObject(line),
+                  let taskID = obj["task_id"] as? String, !taskID.isEmpty else { return }
+            let action = (obj["action"] as? String) ?? ""
+            let date = parseMentesTs(obj["ts"] as? String)
+            if var a = byID[taskID] {
+                a.events += 1
+                if date >= a.date { a.date = date; a.action = action }  // latest wins
+                byID[taskID] = a
+            } else {
+                byID[taskID] = Agg(action: action, date: date, events: 1, order: order)
+                order += 1
+            }
+        }
+        return byID.map { id, a in
+            // The Mentes Tasks app (ai.mentes.tasks, Tauri) claims this scheme.
+            MentesTask(taskID: id, action: a.action, date: a.date, events: a.events,
+                       mentesURL: "mentes-tasks://tasks/\(id)")
+        }
+        .sorted {
+            $0.date != $1.date ? $0.date > $1.date
+                               : byID[$0.taskID]!.order < byID[$1.taskID]!.order
+        }
+    }
+
+    private func mentesSidecarPath(_ transcriptPath: String) -> String {
+        // <uuid>.jsonl → <uuid>.mentes.jsonl (sibling of the transcript)
+        let base = transcriptPath.hasSuffix(".jsonl")
+            ? String(transcriptPath.dropLast(6)) : transcriptPath
+        return base + ".mentes.jsonl"
+    }
+
     private func derivedTitle(_ messages: [TranscriptMessage]) -> String {
         for m in messages where m.role == .user {
             for case let .text(t) in m.blocks {
@@ -188,4 +238,14 @@ private let isoFormatterNoFraction: ISO8601DateFormatter = {
 func parseISO(_ s: String?) -> Date? {
     guard let s, !s.isEmpty else { return nil }
     return isoFormatter.date(from: s) ?? isoFormatterNoFraction.date(from: s)
+}
+
+/// Mentes sidecar timestamps come from Python's `isoformat()` with MICROSECOND
+/// fractions (e.g. "2026-06-22T00:01:43.309337-05:00"), which the millisecond
+/// ISO parser rejects — strip the fraction and retry so the offset still parses.
+private func parseMentesTs(_ s: String?) -> Date {
+    guard let s, !s.isEmpty else { return .distantPast }
+    if let d = parseISO(s) { return d }
+    let stripped = s.replacingOccurrences(of: #"\.\d+"#, with: "", options: .regularExpression)
+    return isoFormatterNoFraction.date(from: stripped) ?? .distantPast
 }

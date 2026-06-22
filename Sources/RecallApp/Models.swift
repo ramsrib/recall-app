@@ -66,6 +66,21 @@ struct SummaryResult: Decodable {
     }
 }
 
+// MARK: - Mentes task (read from the `<id>.mentes.jsonl` sidecar)
+
+/// One Mentes task a session touched, derived in-app from the session's
+/// `<id>.mentes.jsonl` sidecar (read on open by SessionStore — see there).
+struct MentesTask: Identifiable, Hashable {
+    let taskID: String
+    let action: String   // latest action seen ("create" | "update" | …)
+    let date: Date       // latest event time
+    let events: Int      // how many times the task was touched
+    let mentesURL: String
+
+    var id: String { taskID }
+    var shortID: String { String(taskID.prefix(8)) }
+}
+
 // MARK: - Resume (decoded from `recall resume`)
 
 struct ResumeInfo: Decodable {

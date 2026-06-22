@@ -174,6 +174,9 @@ struct SessionRow: View {
                 if session.archived { TagBadge(text: "ARCHIVED") }
                 Text(session.projectName).lineLimit(1)
                 if session.hasSummary { Image(systemName: "sparkles").font(.system(size: 9)) }
+                if app.mentesSessionIDs.contains(session.sessionID) {
+                    Image(systemName: "checklist").font(.system(size: 9)).help("Has Mentes tasks")
+                }
                 Spacer(minLength: 4)
                 Text(session.lastDate, format: .relative(presentation: .named))
                     .foregroundStyle(.tertiary).lineLimit(1)

@@ -42,6 +42,7 @@ struct DetailView: View {
             VStack(alignment: .leading, spacing: 20) {
                 if let note = app.resumeNote { resumeBanner(note) }
                 glanceSection
+                mentesSection
                 Divider().overlay(Color.hairline)
                 transcriptSection(s)
             }
@@ -111,6 +112,25 @@ struct DetailView: View {
             .background(Color.cardFill, in: RoundedRectangle(cornerRadius: Theme.cardCorner))
     }
 
+    // MARK: Mentes tasks
+
+    @ViewBuilder
+    private var mentesSection: some View {
+        if !app.mentesTasks.isEmpty {
+            VStack(alignment: .leading, spacing: 10) {
+                sectionLabel("Mentes Tasks")
+                VStack(spacing: 0) {
+                    ForEach(Array(app.mentesTasks.enumerated()), id: \.element.id) { i, task in
+                        if i > 0 { Divider().overlay(Color.hairline) }
+                        MentesTaskRow(task: task)
+                    }
+                }
+                .padding(.horizontal, 14)
+                .background(Color.cardFill, in: RoundedRectangle(cornerRadius: Theme.cardCorner))
+            }
+        }
+    }
+
     // MARK: Transcript (auto-loaded)
 
     @ViewBuilder
@@ -133,6 +153,55 @@ struct DetailView: View {
         Text(text.uppercased())
             .font(.system(size: 11, weight: .semibold))
             .foregroundStyle(.secondary)
+    }
+}
+
+// MARK: - Mentes task row
+
+private struct MentesTaskRow: View {
+    @EnvironmentObject var app: AppState
+    let task: MentesTask
+    @State private var hovering = false
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: task.action == "create" ? "plus.circle" : "arrow.triangle.2.circlepath")
+                .font(.system(size: 13)).foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(task.shortID).font(.system(size: 13, weight: .medium)).monospaced()
+                Text(subtitle).font(.system(size: 11)).foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 8)
+            Button { openInMentes() } label: {
+                Image(systemName: "arrow.up.forward.app").font(.system(size: 13))
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(hovering ? Color.primary : Color.secondary)
+            .help("Open task in Mentes")
+        }
+        .padding(.vertical, 10)
+        .contentShape(Rectangle())
+        .onHover { hovering = $0 }
+        .onTapGesture { openInMentes() }
+    }
+
+    private var subtitle: String {
+        var parts = [task.action.capitalized]
+        if task.events > 1 { parts.append("\(task.events) events") }
+        return parts.joined(separator: " · ")
+            + " · " + task.date.formatted(.relative(presentation: .named))
+    }
+
+    private func openInMentes() {
+        guard let url = URL(string: task.mentesURL) else { return }
+        // If the Mentes Tasks app isn't installed to handle the scheme, the open
+        // fails silently — fall back to copying the link so the click still does
+        // something visible.
+        if !NSWorkspace.shared.open(url) {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(task.mentesURL, forType: .string)
+            app.resumeNote = "Couldn’t open Mentes — copied \(task.mentesURL) to the clipboard."
+        }
     }
 }
 

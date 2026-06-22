@@ -157,6 +157,7 @@ Tarp tab. A clipboard fallback covers any edge case.
 | 2026-06-21 | Resume via **Tarp local** tab-config / open-in-tab (cloud-free); never Oz cloud. |
 | 2026-06-21 | Design: **monochromatic, distraction-free**, keyboard-first. |
 | 2026-06-21 | **Deep links**: a `recall://session/<id>` URL scheme opens a thread by id. Consumer-only for now — the app handles incoming links; no in-app "Copy Link" or CLI link-emitter yet. |
+| 2026-06-22 | **Mentes tasks**: surface the `<id>.mentes.jsonl` sidecar in the app — a list badge when the sidecar *exists* (cheap existence check), and a detail **Mentes Tasks** section that reads it on open, with `mentes-tasks://tasks/<id>` deep links out (the scheme the Mentes Tasks app claims). Read **app-side** (the sidecar is a sibling file the app already has the path to — same pattern as the transcript reader), not via the CLI: an early `recall mentes` command was added then removed as unnecessary, since reading it needs nothing from the recall engine/DB. (Pinned/archived legitimately come from the CLI — pin state lives in the DB, archived is a directory — but mentes-has-tasks is fully file-derivable.) |
 
 ## Open questions
 

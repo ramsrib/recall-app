@@ -18,6 +18,7 @@ disagree on what a search means.
 | **Read** | Full-parses the selected transcript and renders messages — prose as Markdown, fenced code in monospaced boxes, `thinking` / tool calls / tool results collapsible. |
 | **Reindex** | Streams `recall index` progress (⌘⇧R). |
 | **Deep link** | `recall://session/<id>` opens that thread — launching the app if it isn't running. |
+| **Mentes tasks** | Badges sessions that have a `<id>.mentes.jsonl` sidecar; the detail view reads it on open and lists the tasks, each with an Open-in-Mentes link. |
 
 Semantic & Hybrid search need [Ollama](https://ollama.com) running (that's the
 CLI's requirement). If it's down, the app surfaces the error and offers a
@@ -38,6 +39,24 @@ shows it. The id is the `session_id` that `recall list` prints.
 
 > The `recall://` scheme is registered only by the packaged app (`make app` /
 > `make install`), not by `make run` / `swift run`.
+
+## Mentes tasks
+
+If a session created or updated [Mentes](https://mentes.ai) tasks, a
+`<session-id>.mentes.jsonl` sidecar sits next to its transcript — an append-log
+of task events (`{ts, action, task_id, session_id, recall_url}`).
+
+- **List badge** — sessions whose sidecar *exists* get a small task glyph. This
+  is a pure existence check (the file isn't read), computed once when the list
+  loads, so it stays cheap.
+- **Detail section** — opening a session reads the sidecar directly (it's a
+  sibling of a path the app already has — no `recall` round-trip) and shows a
+  **Mentes Tasks** section: the distinct tasks (latest action, event count,
+  time), each with a button that opens `mentes-tasks://tasks/<id>` (the scheme
+  the Mentes Tasks app claims).
+
+The reverse direction already exists: each sidecar line carries a `recall_url`
+(`recall://session/<id>`), so Mentes can deep-link back into this app.
 
 ## Build & run
 
