@@ -133,6 +133,11 @@ final class AppState: ObservableObject {
     // MARK: List
 
     func load() async {
+        // Coalesce concurrent loads. On launch both ContentView's `.task` and the
+        // didBecomeActive handler call load() at once; without this they'd spawn
+        // two `recall` processes that race on the DB. (@MainActor serializes up to
+        // the first await, so this guard is set before any duplicate slips past.)
+        guard !isLoading else { return }
         isLoading = true
         loadError = nil
         let cli = self.cli
