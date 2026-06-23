@@ -16,11 +16,19 @@ app: ## Package build/Recall App.app with the bundle id
 open: app ## Package then launch the .app
 	open "$(APP)"
 
+LSREGISTER := /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
+
 install: app ## Build, package, and install to /Applications
 	@pkill -9 -x RecallApp 2>/dev/null || true
 	@pkill -9 -f "$(APP_NAME).app" 2>/dev/null || true
 	@rm -rf "$(DEST)"
 	@ditto "$(APP)" "$(DEST)"
+	@# Remove the build copy: two bundles with the same id at different paths each
+	@# register with LaunchServices, and LSMultipleInstancesProhibited only dedups
+	@# within ONE bundle — so leaving build/ around lets a second instance launch.
+	@rm -rf "$(APP)"
+	@# Make /Applications the canonical handler (and drop the stale build/ entry).
+	@"$(LSREGISTER)" -f "$(DEST)" 2>/dev/null || true
 	@echo "✓ installed → $(DEST)"
 
 clean: ## Remove build artifacts

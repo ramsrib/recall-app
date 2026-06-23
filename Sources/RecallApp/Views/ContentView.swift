@@ -95,8 +95,9 @@ struct FilterSidebar: View {
                 Label("Usage", systemImage: "chart.pie").tag(SidebarItem.usage)
             }
             Section("Tools") {
-                Label("Claude", systemImage: "sparkles").tag(SidebarItem.tool(.claude))
-                Label("Codex", systemImage: "chevron.left.forwardslash.chevron.right")
+                Label { Text("Claude") } icon: { SourceIcon(source: .claude) }
+                    .tag(SidebarItem.tool(.claude))
+                Label { Text("Codex") } icon: { SourceIcon(source: .codex) }
                     .tag(SidebarItem.tool(.codex))
             }
             Section("Projects") {

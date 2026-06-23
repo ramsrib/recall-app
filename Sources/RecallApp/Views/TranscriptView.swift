@@ -128,7 +128,7 @@ struct ChatBubble: View {
                 Text(time, format: .dateTime.month(.abbreviated).day().hour().minute())
                     .font(.caption2).foregroundStyle(.tertiary)
             }
-            CopyButton(text: text)
+            CopyButton(text: text, help: "Copy message")
         }
         .padding(.horizontal, 4)
     }
@@ -238,6 +238,7 @@ struct CollapsibleRow<Label: View, Content: View>: View {
 
 struct CopyButton: View {
     let text: String
+    var help: String = "Copy"
     @State private var copied = false
 
     var body: some View {
@@ -255,7 +256,7 @@ struct CopyButton: View {
             .foregroundStyle(.tertiary)
         }
         .buttonStyle(.plain)
-        .help("Copy message")
+        .help(help)
     }
 }
 

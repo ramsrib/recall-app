@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 
 /// Search text in isolation. Held by SessionListView via @State (NOT observed),
 /// so typing re-renders only SessionListContent (which @ObservedObject's it),
@@ -192,6 +193,20 @@ struct SessionRow: View {
         }
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
+        .contextMenu {
+            Button("Copy Session ID") { setClipboard(session.sessionID) }
+            Button("Copy Link") { setClipboard("recall://session/\(session.sessionID)") }
+            Divider()
+            Button(session.pinned ? "Unpin" : "Pin") { app.togglePin(session) }
+            Button("Reveal in Finder") {
+                NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: session.path)])
+            }
+        }
+    }
+
+    private func setClipboard(_ s: String) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(s, forType: .string)
     }
 
     private var rowBackground: Color {

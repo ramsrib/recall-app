@@ -72,10 +72,11 @@ struct DetailView: View {
     @ViewBuilder
     private var glanceSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack {
+            HStack(spacing: 12) {
                 sectionLabel("Summary")
                 Spacer()
-                if app.summary != nil && !app.summaryLoading {
+                if let summary = app.summary, !app.summaryLoading {
+                    CopyButton(text: summary, help: "Copy summary")
                     Button("Regenerate") { app.loadSummary(refresh: true) }
                         .buttonStyle(.plain).font(.caption).foregroundStyle(.secondary)
                 }
@@ -172,6 +173,7 @@ private struct MentesTaskRow: View {
                 Text(subtitle).font(.system(size: 11)).foregroundStyle(.secondary)
             }
             Spacer(minLength: 8)
+            CopyButton(text: task.taskID, help: "Copy task ID")
             Button { openInMentes() } label: {
                 Image(systemName: "arrow.up.forward.app").font(.system(size: 13))
             }
@@ -209,7 +211,7 @@ private struct MentesTaskRow: View {
 
 struct GlanceCard: View {
     let text: String
-    private static let labels: Set<String> = ["Gist", "Topics", "Started", "Ended"]
+    private static let labels: Set<String> = ["Gist", "Key points", "Outcome", "Next"]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -224,7 +226,12 @@ struct GlanceCard: View {
         .textSelection(.enabled)
     }
 
-    private var lines: [String] { text.components(separatedBy: "\n") }
+    // The card is plain text; codex sometimes wraps identifiers in `backticks`
+    // (the prompt favors concrete service/file names) — strip them so they don't
+    // render literally.
+    private var lines: [String] {
+        text.replacingOccurrences(of: "`", with: "").components(separatedBy: "\n")
+    }
 
     @ViewBuilder
     private func row(_ raw: String) -> some View {
