@@ -124,6 +124,7 @@ struct SessionListContent: View {
     private func groupHeader(_ group: SessionGroup) -> some View {
         HStack(spacing: 6) {
             if group.bucket == .pinned { Image(systemName: "pin.fill").font(.system(size: 9)) }
+            if group.bucket == .parked { Image(systemName: "pause.circle.fill").font(.system(size: 9)) }
             Text(group.bucket.rawValue.uppercased())
             Spacer()
         }
@@ -175,6 +176,9 @@ struct SessionRow: View {
                 if session.archived { TagBadge(text: "ARCHIVED") }
                 Text(session.projectName).lineLimit(1)
                 if session.hasSummary { Image(systemName: "sparkles").font(.system(size: 9)) }
+                if app.parkedSessionIDs.contains(session.sessionID) {
+                    Image(systemName: "pause.circle").font(.system(size: 9)).help("Parked session")
+                }
                 if app.mentesSessionIDs.contains(session.sessionID) {
                     Image(systemName: "checklist").font(.system(size: 9)).help("Has Mentes tasks")
                 }

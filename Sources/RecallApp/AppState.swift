@@ -41,12 +41,22 @@ final class AppState: ObservableObject {
     @Published var mentesTasks: [MentesTask] = []
     @Published var mentesSessionIDs: Set<String> = []
 
+    // Parked sessions (`.park.json` marker present). `parkedSessionIDs` is the set
+    // that HAS a valid marker — computed at load time to drive the badge/filter;
+    // `parkMarker` is the selected session's marker (title/status), read on open.
+    @Published var parkedSessionIDs: Set<String> = []
+    @Published var parkMarker: ParkMarker?
+
     // Transcript reader (auto-loaded on selection — it's free local parsing).
     // readerItems is the flattened/grouped view model, built off the main thread
     // so the reader never rebuilds it during render or scroll.
     @Published var transcript: [TranscriptMessage] = []
     @Published var readerItems: [ReaderItem] = []
     @Published var transcriptLoading = false
+
+    // Model + token usage for the selected session, derived from its transcript
+    // in the same off-main parse that builds the reader (no ccusage round-trip).
+    @Published var sessionInsights: SessionInsights?
 
     // Index / status / resume
     @Published var isIndexing = false
@@ -66,6 +76,10 @@ final class AppState: ObservableObject {
     var pinnedCount: Int { sessions.lazy.filter { $0.pinned }.count }
     var archivedCount: Int { sessions.lazy.filter { $0.archived }.count }
     var execCount: Int { sessions.lazy.filter { $0.isExec }.count }
+    var parkedCount: Int {
+        let parked = parkedSessionIDs
+        return sessions.lazy.filter { parked.contains($0.sessionID) }.count
+    }
 
     /// Projects present in the index, most-recently-used first.
     var projects: [ProjectFacet] {
@@ -95,6 +109,7 @@ final class AppState: ObservableObject {
         switch filter {
         case .all:               break
         case .pinned:            base = base.filter { $0.pinned }
+        case .parked:            base = base.filter { parkedSessionIDs.contains($0.sessionID) }
         case .archived:          base = base.filter { $0.archived }
         case .automation:        base = base.filter { $0.isExec }
         case .usage:             break   // unreachable (filter is never .usage)
@@ -115,7 +130,7 @@ final class AppState: ObservableObject {
     }
 
     func groups(_ query: String) -> [SessionGroup] {
-        SessionGroup.build(from: filteredSessions(query))
+        SessionGroup.build(from: filteredSessions(query), parkedIDs: parkedSessionIDs)
     }
 
     /// Keyboard nav uses the unfiltered, sidebar-filtered list (search-agnostic
@@ -153,13 +168,17 @@ final class AppState: ObservableObject {
             // per session (no file reads), done off-main so it never hitches.
             let store = self.store
             let pairs = sessions.map { ($0.sessionID, $0.path) }
-            mentesSessionIDs = await Task.detached(priority: .utility) {
-                var ids = Set<String>()
-                for (sid, path) in pairs where store.hasMentesSidecar(forTranscript: path) {
-                    ids.insert(sid)
+            let sidecars = await Task.detached(priority: .utility) {
+                () -> (mentes: Set<String>, parked: Set<String>) in
+                var mentes = Set<String>(), parked = Set<String>()
+                for (sid, path) in pairs {
+                    if store.hasMentesSidecar(forTranscript: path) { mentes.insert(sid) }
+                    if store.parkMarker(forTranscript: path) != nil { parked.insert(sid) }
                 }
-                return ids
+                return (mentes, parked)
             }.value
+            mentesSessionIDs = sidecars.mentes
+            parkedSessionIDs = sidecars.parked
             // A deep link opened before the index loaded wins over the default.
             if let pending = pendingDeepLinkID {
                 pendingDeepLinkID = nil
@@ -185,8 +204,10 @@ final class AppState: ObservableObject {
         summaryError = nil
         summaryLoading = false
         mentesTasks = []
+        parkMarker = nil
         transcript = []
         readerItems = []
+        sessionInsights = nil
         // Show a cached summary immediately; NEVER auto-spend a codex call.
         // (loadSummary(refresh:) would regenerate when the cache looks stale —
         // which it always does for an actively-growing session, so opening it
@@ -195,6 +216,7 @@ final class AppState: ObservableObject {
             loadCachedSummary()
         }
         loadMentesTasks()
+        loadParkMarker()
         loadTranscript()
     }
 
@@ -214,6 +236,23 @@ final class AppState: ObservableObject {
             }.value
             guard self.selectedID == id else { return }
             self.mentesTasks = tasks
+        }
+    }
+
+    /// Read the selected session's `.park.json` marker off-main (a sibling of a
+    /// path we already have — no `recall` round-trip). Leaves `parkMarker` nil
+    /// when the session isn't parked.
+    func loadParkMarker() {
+        guard let s = selectedSession else { return }
+        let store = self.store
+        let path = s.path
+        let id = s.sessionID
+        Task {
+            let marker = await Task.detached(priority: .userInitiated) {
+                store.parkMarker(forTranscript: path)
+            }.value
+            guard self.selectedID == id else { return }
+            self.parkMarker = marker
         }
     }
 
@@ -291,13 +330,14 @@ final class AppState: ObservableObject {
             // Parse AND flatten/group into reader items on the background task, so
             // the main thread only receives a ready-to-render array.
             let built = await Task.detached(priority: .userInitiated) {
-                () -> (messages: [TranscriptMessage], items: [ReaderItem]) in
+                () -> (messages: [TranscriptMessage], items: [ReaderItem], insights: SessionInsights) in
                 let parsed = store.parseTranscript(path: path, source: source)
-                return (parsed.messages, ReaderItem.build(from: parsed.messages))
+                return (parsed.messages, ReaderItem.build(from: parsed.messages), parsed.insights)
             }.value
             guard self.selectedID == s.sessionID else { return }
             self.transcript = built.messages
             self.readerItems = built.items
+            self.sessionInsights = built.insights
             self.transcriptLoading = false
         }
     }

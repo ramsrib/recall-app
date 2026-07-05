@@ -77,28 +77,32 @@ struct FilterSidebar: View {
     @EnvironmentObject var app: AppState
     @State private var projectsShown = 0
 
-    private var selection: Binding<SidebarItem?> {
-        Binding(get: { app.sidebarItem }, set: { if let v = $0 { app.sidebarItem = v } })
-    }
-
     var body: some View {
-        List(selection: selection) {
+        // No `List(selection:)` — its native focused highlight paints a harsh
+        // bright fill in dark mode (primary tint → white). SidebarRow draws a
+        // custom, focus-independent selection using the app's theme tokens.
+        List {
             Section("Library") {
-                Label("All Sessions", systemImage: "tray.full").tag(SidebarItem.all)
-                Label("Pinned", systemImage: "pin").tag(SidebarItem.pinned)
+                SidebarRow(item: .all)    { Label("All Sessions", systemImage: "tray.full") }
+                SidebarRow(item: .pinned) { Label("Pinned", systemImage: "pin") }
+                if app.parkedCount > 0 {
+                    SidebarRow(item: .parked) { Label("Parked", systemImage: "pause.circle") }
+                }
                 if app.archivedCount > 0 {
-                    Label("Archived", systemImage: "archivebox").tag(SidebarItem.archived)
+                    SidebarRow(item: .archived) { Label("Archived", systemImage: "archivebox") }
                 }
                 if app.execCount > 0 {
-                    Label("Automation", systemImage: "terminal").tag(SidebarItem.automation)
+                    SidebarRow(item: .automation) { Label("Automation", systemImage: "terminal") }
                 }
-                Label("Usage", systemImage: "chart.pie").tag(SidebarItem.usage)
+                SidebarRow(item: .usage) { Label("Usage", systemImage: "chart.pie") }
             }
             Section("Tools") {
-                Label { Text("Claude") } icon: { SourceIcon(source: .claude) }
-                    .tag(SidebarItem.tool(.claude))
-                Label { Text("Codex") } icon: { SourceIcon(source: .codex) }
-                    .tag(SidebarItem.tool(.codex))
+                SidebarRow(item: .tool(.claude)) {
+                    Label { Text("Claude") } icon: { SourceIcon(source: .claude) }
+                }
+                SidebarRow(item: .tool(.codex)) {
+                    Label { Text("Codex") } icon: { SourceIcon(source: .codex) }
+                }
             }
             Section("Projects") {
                 ForEach(app.recentProjects) { projectRow($0) }
@@ -111,6 +115,8 @@ struct FilterSidebar: View {
                             .font(.caption).foregroundStyle(.secondary)
                     }
                     .buttonStyle(.plain)
+                    .listRowInsets(EdgeInsets(top: 2, leading: 16, bottom: 2, trailing: 10))
+                    .listRowBackground(Color.clear)
                 }
             }
         }
@@ -136,9 +142,10 @@ struct FilterSidebar: View {
     }
 
     private func projectRow(_ p: ProjectFacet) -> some View {
-        Label(p.name, systemImage: "folder")
-            .tag(SidebarItem.project(p.path))
-            .help(p.path)
+        SidebarRow(item: .project(p.path)) {
+            Label(p.name, systemImage: "folder")
+        }
+        .help(p.path)
     }
 
     private var footer: some View {
@@ -151,5 +158,41 @@ struct FilterSidebar: View {
             }
             .padding(.horizontal, 12).padding(.vertical, 8)
         }
+    }
+}
+
+// MARK: - Sidebar filter row
+
+/// A sidebar filter row with a custom, focus-independent selection style — a
+/// subtle fill + hairline border using the app's theme tokens. Replaces the
+/// native `List(selection:)` highlight, which in dark mode paints a harsh bright
+/// fill when the sidebar is focused (the `.primary` tint resolves to white).
+private struct SidebarRow<Content: View>: View {
+    @EnvironmentObject var app: AppState
+    let item: SidebarItem
+    @ViewBuilder var content: () -> Content
+    @State private var hovering = false
+
+    var body: some View {
+        let selected = app.sidebarItem == item
+        content()
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.vertical, 5)
+            .padding(.horizontal, 8)
+            .background {
+                RoundedRectangle(cornerRadius: 7)
+                    .fill(selected ? Color.selectionFill
+                                   : (hovering ? Color.primary.opacity(0.05) : Color.clear))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 7)
+                            .strokeBorder(selected ? Color.hairline : Color.clear, lineWidth: 1)
+                    }
+            }
+            .contentShape(Rectangle())
+            .onHover { hovering = $0 }
+            .onTapGesture { app.sidebarItem = item }
+            .listRowInsets(EdgeInsets(top: 1, leading: 8, bottom: 1, trailing: 8))
+            .listRowBackground(Color.clear)
+            .listRowSeparator(.hidden)
     }
 }

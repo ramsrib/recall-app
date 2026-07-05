@@ -41,10 +41,12 @@ struct DetailView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 if let note = app.resumeNote { resumeBanner(note) }
-                glanceSection
-                mentesSection
+                detailsSection(s)                                  // 1. Details (always first)
+                if let park = app.parkMarker { parkBanner(park) }  // 2. Parked
+                mentesSection                                      // 3. Tasks
+                glanceSection                                      // 4. Summary
                 Divider().overlay(Color.hairline)
-                transcriptSection(s)
+                transcriptSection(s)                               // 5. Recent Messages
             }
             .frame(maxWidth: Theme.readerMaxWidth, alignment: .leading)
             .frame(maxWidth: .infinity)            // center the reading column
@@ -65,6 +67,92 @@ struct DetailView: View {
         }
         .padding(10)
         .background(Color.cardFill, in: RoundedRectangle(cornerRadius: Theme.corner))
+    }
+
+    // MARK: Parked banner (sourced from the `.park.json` marker)
+
+    private func parkBanner(_ park: ParkMarker) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "pause.circle.fill")
+                .font(.system(size: 15)).foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 8) {
+                    Text("Parked").font(.system(size: 12, weight: .semibold))
+                    if let status = park.statusDisplay { TagBadge(text: status.uppercased()) }
+                }
+                if let title = park.title, !title.isEmpty {
+                    Text(title).font(.system(size: 13)).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Text("Resume this session with ▶ above, or /unpark-session.")
+                    .font(.system(size: 11)).foregroundStyle(.tertiary)
+            }
+            Spacer(minLength: 8)
+            if let taskID = park.taskID { CopyButton(text: taskID, help: "Copy Mentes task ID") }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.cardFill, in: RoundedRectangle(cornerRadius: Theme.corner))
+    }
+
+    // MARK: Details (model + token usage — the header block above the summary)
+
+    @ViewBuilder
+    private func detailsSection(_ s: SessionMeta) -> some View {
+        if let ins = app.sessionInsights, !ins.isEmpty {
+            VStack(alignment: .leading, spacing: 10) {
+                sectionLabel("Details")
+                VStack(alignment: .leading, spacing: 0) {
+                    HStack(spacing: 8) {
+                        SourceIcon(source: s.sourceKind, size: 13)
+                        Text(ins.modelDisplay)
+                            .font(.system(size: 14, weight: .medium))
+                            .lineLimit(1).truncationMode(.middle)
+                        Spacer(minLength: 8)
+                        if let cli = ins.cliVersion {
+                            Text("\(s.sourceKind.displayName) \(cli)")
+                                .font(.system(size: 11)).foregroundStyle(.tertiary)
+                        }
+                    }
+                    Divider().overlay(Color.hairline).padding(.vertical, 12)
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 92), spacing: 12)],
+                              alignment: .leading, spacing: 12) {
+                        if ins.hasTokens {
+                            metaStat("Total", UsageFormat.tokens(ins.totalTokens))
+                            metaStat("Input", UsageFormat.tokens(ins.inputTokens))
+                            if ins.cacheTokens > 0 { metaStat("Cache", UsageFormat.tokens(ins.cacheTokens)) }
+                            metaStat("Output", UsageFormat.tokens(ins.outputTokens))
+                        }
+                        metaStat("Messages", "\(s.msgCount)")
+                        metaStat("Duration", durationText(s))
+                    }
+                }
+                .padding(16)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color.cardFill, in: RoundedRectangle(cornerRadius: Theme.cardCorner))
+            }
+        }
+    }
+
+    private func metaStat(_ label: String, _ value: String) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(label.uppercased())
+                .font(.system(size: 9, weight: .semibold)).foregroundStyle(.tertiary)
+            Text(value).font(.system(size: 17, weight: .semibold)).monospacedDigit()
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// Compact elapsed span between the session's first and last message.
+    private func durationText(_ s: SessionMeta) -> String {
+        let secs = max(0, s.lastTs - s.firstTs)
+        if secs < 60 { return "\(secs)s" }
+        let mins = secs / 60
+        if mins < 60 { return "\(mins)m" }
+        let hrs = mins / 60, remMin = mins % 60
+        if hrs < 24 { return remMin == 0 ? "\(hrs)h" : "\(hrs)h \(remMin)m" }
+        let days = hrs / 24, remHr = hrs % 24
+        return remHr == 0 ? "\(days)d" : "\(days)d \(remHr)h"
     }
 
     // MARK: Glance
@@ -119,7 +207,7 @@ struct DetailView: View {
     private var mentesSection: some View {
         if !app.mentesTasks.isEmpty {
             VStack(alignment: .leading, spacing: 10) {
-                sectionLabel("Mentes Tasks")
+                sectionLabel("Tasks")
                 VStack(spacing: 0) {
                     ForEach(Array(app.mentesTasks.enumerated()), id: \.element.id) { i, task in
                         if i > 0 { Divider().overlay(Color.hairline) }

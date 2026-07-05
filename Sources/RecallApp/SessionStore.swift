@@ -11,15 +11,20 @@ struct SessionStore: Sendable {
         let text = String(decoding: data, as: UTF8.self)
         var messages: [TranscriptMessage] = []
         var title = ""
+        var stats = InsightsAccumulator()
         text.enumerateLines { line, _ in
             guard let obj = jsonObject(line) else { return }
             switch source {
-            case .claude: parseClaudeLine(obj, into: &messages, title: &title)
-            case .codex:  parseCodexLine(obj, into: &messages, title: &title)
+            case .claude:
+                stats.ingestClaude(obj)
+                parseClaudeLine(obj, into: &messages, title: &title)
+            case .codex:
+                stats.ingestCodex(obj)
+                parseCodexLine(obj, into: &messages, title: &title)
             }
         }
         if title.isEmpty { title = derivedTitle(messages) }
-        return ParsedTranscript(title: title, messages: messages)
+        return ParsedTranscript(title: title, messages: messages, insights: stats.finish(source: source))
     }
 
     // MARK: Claude
@@ -165,9 +170,31 @@ struct SessionStore: Sendable {
 
     private func mentesSidecarPath(_ transcriptPath: String) -> String {
         // <uuid>.jsonl → <uuid>.mentes.jsonl (sibling of the transcript)
+        return siblingPath(transcriptPath, suffix: ".mentes.jsonl")
+    }
+
+    // MARK: Park marker
+
+    /// Read the `<id>.park.json` marker for a session, or nil when the session
+    /// isn't parked (no marker, or an aborted empty `{}` one). Cheap — the file is
+    /// a tiny single-object JSON sibling of the transcript. Used both to badge the
+    /// list (see AppState) and to show park status on open.
+    func parkMarker(forTranscript path: String) -> ParkMarker? {
+        guard let data = FileManager.default.contents(atPath: parkMarkerPath(path)),
+              let marker = try? JSONDecoder().decode(ParkMarker.self, from: data),
+              marker.isParked else { return nil }
+        return marker
+    }
+
+    private func parkMarkerPath(_ transcriptPath: String) -> String {
+        // <uuid>.jsonl → <uuid>.park.json (sibling of the transcript)
+        return siblingPath(transcriptPath, suffix: ".park.json")
+    }
+
+    private func siblingPath(_ transcriptPath: String, suffix: String) -> String {
         let base = transcriptPath.hasSuffix(".jsonl")
             ? String(transcriptPath.dropLast(6)) : transcriptPath
-        return base + ".mentes.jsonl"
+        return base + suffix
     }
 
     private func derivedTitle(_ messages: [TranscriptMessage]) -> String {
@@ -179,6 +206,100 @@ struct SessionStore: Sendable {
             }
         }
         return "(untitled)"
+    }
+}
+
+// MARK: - Insights accumulator (model + token totals, single-pass over the file)
+
+/// Accumulates model + token usage while `parseTranscript` walks the JSONL, so
+/// the stats come for free from the read the reader already does. Kept separate
+/// from the message-building pass because it must see lines the reader skips
+/// (assistant lines with no renderable blocks, Codex `token_count` events, …).
+private struct InsightsAccumulator {
+    private var modelOrder: [String] = []
+    private var modelTurns: [String: Int] = [:]
+    private var seenUsage = Set<String>()
+    // Claude: per-message usage summed across the session (cache tracked apart).
+    private var input = 0, output = 0, cacheRead = 0, cacheCreate = 0, turns = 0
+    // Codex: `token_count.total_token_usage` is already cumulative — keep latest.
+    private var codexInput = 0, codexCached = 0, codexOutput = 0
+    private var codexTotal: Int?
+    private var contextWindow: Int?
+    private var cliVersion: String?
+
+    mutating func ingestClaude(_ obj: [String: Any]) {
+        if cliVersion == nil, let v = obj["version"] as? String, !v.isEmpty { cliVersion = v }
+        guard (obj["type"] as? String) == "assistant",
+              let msg = obj["message"] as? [String: Any] else { return }
+        // A streamed assistant message can be logged more than once; dedupe on the
+        // (requestId, message.id) pair so tokens aren't counted twice (ccusage keys
+        // on the same pair).
+        if let id = msg["id"] as? String {
+            let key = ((obj["requestId"] as? String) ?? "") + "|" + id
+            if !seenUsage.insert(key).inserted { return }
+        }
+        if let m = msg["model"] as? String, !m.isEmpty, !m.hasPrefix("<") { note(m) }
+        turns += 1
+        guard let u = msg["usage"] as? [String: Any] else { return }
+        input += (u["input_tokens"] as? Int) ?? 0
+        output += (u["output_tokens"] as? Int) ?? 0
+        cacheCreate += (u["cache_creation_input_tokens"] as? Int) ?? 0
+        cacheRead += (u["cache_read_input_tokens"] as? Int) ?? 0
+    }
+
+    mutating func ingestCodex(_ obj: [String: Any]) {
+        guard let payload = obj["payload"] as? [String: Any] else { return }
+        switch obj["type"] as? String {
+        case "session_meta":
+            if cliVersion == nil, let v = payload["cli_version"] as? String { cliVersion = v }
+            if let m = payload["model"] as? String, !m.isEmpty { note(m) }
+        case "turn_context":
+            if let m = payload["model"] as? String, !m.isEmpty { note(m) }
+        case "event_msg":
+            guard (payload["type"] as? String) == "token_count",
+                  let info = payload["info"] as? [String: Any],
+                  let total = info["total_token_usage"] as? [String: Any] else { return }
+            // Cumulative for the session — the last one seen wins.
+            codexInput = (total["input_tokens"] as? Int) ?? codexInput
+            codexCached = (total["cached_input_tokens"] as? Int) ?? codexCached
+            codexOutput = (total["output_tokens"] as? Int) ?? codexOutput
+            codexTotal = (total["total_tokens"] as? Int) ?? codexTotal
+            if let cw = info["model_context_window"] as? Int { contextWindow = cw }
+        default:
+            break
+        }
+    }
+
+    private mutating func note(_ model: String) {
+        if modelTurns[model] == nil { modelOrder.append(model) }
+        modelTurns[model, default: 0] += 1
+    }
+
+    func finish(source: SessionSource) -> SessionInsights {
+        var out = SessionInsights()
+        out.models = modelOrder.sorted {
+            let a = modelTurns[$0] ?? 0, b = modelTurns[$1] ?? 0
+            if a != b { return a > b }
+            return (modelOrder.firstIndex(of: $0) ?? 0) < (modelOrder.firstIndex(of: $1) ?? 0)
+        }
+        out.cliVersion = cliVersion
+        out.contextWindow = contextWindow
+        out.assistantTurns = turns
+        switch source {
+        case .claude:
+            out.inputTokens = input
+            out.cacheTokens = cacheRead + cacheCreate
+            out.outputTokens = output
+            out.totalTokens = input + cacheRead + cacheCreate + output
+        case .codex:
+            // Codex's `input_tokens` already includes the cached portion; split it
+            // out so input + cache + output stays additive like the Claude path.
+            out.cacheTokens = codexCached
+            out.inputTokens = max(0, codexInput - codexCached)
+            out.outputTokens = codexOutput
+            out.totalTokens = codexTotal ?? (codexInput + codexOutput)
+        }
+        return out
     }
 }
 
