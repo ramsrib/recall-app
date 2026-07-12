@@ -69,7 +69,7 @@ struct DetailView: View {
         .background(Color.cardFill, in: RoundedRectangle(cornerRadius: Theme.corner))
     }
 
-    // MARK: Parked banner (sourced from the `.park.json` marker)
+    // MARK: Parked banner (sourced from the optional `.park.json` sidecar)
 
     private func parkBanner(_ park: ParkMarker) -> some View {
         HStack(alignment: .top, spacing: 10) {
@@ -84,11 +84,11 @@ struct DetailView: View {
                     Text(title).font(.system(size: 13)).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
-                Text("Resume this session with ▶ above, or /unpark-session.")
+                Text("Resume this session with ▶ above.")
                     .font(.system(size: 11)).foregroundStyle(.tertiary)
             }
             Spacer(minLength: 8)
-            if let taskID = park.taskID { CopyButton(text: taskID, help: "Copy Mentes task ID") }
+            if let taskID = park.taskID { CopyButton(text: taskID, help: "Copy task ID") }
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -201,7 +201,7 @@ struct DetailView: View {
             .background(Color.cardFill, in: RoundedRectangle(cornerRadius: Theme.cardCorner))
     }
 
-    // MARK: Mentes tasks
+    // MARK: Tasks (from the optional sidecar; hidden when there are none)
 
     @ViewBuilder
     private var mentesSection: some View {
@@ -245,7 +245,7 @@ struct DetailView: View {
     }
 }
 
-// MARK: - Mentes task row
+// MARK: - Task row (from the optional sidecar)
 
 private struct MentesTaskRow: View {
     @EnvironmentObject var app: AppState
@@ -284,7 +284,7 @@ private struct MentesTaskRow: View {
 
     private func openInMentes() {
         guard let url = URL(string: task.mentesURL) else { return }
-        // If the Mentes Tasks app isn't installed to handle the scheme, the open
+        // Nothing may be registered to handle the scheme, in which case the open
         // fails silently — fall back to copying the link so the click still does
         // something visible.
         if !NSWorkspace.shared.open(url) {

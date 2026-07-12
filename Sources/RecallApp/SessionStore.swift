@@ -125,18 +125,18 @@ struct SessionStore: Sendable {
         }
     }
 
-    // MARK: Mentes sidecar
+    // MARK: Task sidecar
 
-    /// Whether a session has a `<id>.mentes.jsonl` sidecar (i.e. it touched
-    /// Mentes tasks). A pure existence check — the file is NOT read; this just
-    /// drives the list badge. The details are read on open via `mentesTasks`.
+    /// Whether a session has a `.mentes.jsonl` sidecar next to its transcript.
+    /// A pure existence check — the file is NOT read; this just drives the list
+    /// badge. The details are read on open via `mentesTasks`.
     func hasMentesSidecar(forTranscript path: String) -> Bool {
         FileManager.default.fileExists(atPath: mentesSidecarPath(path))
     }
 
-    /// Read the `<id>.mentes.jsonl` sidecar and return the distinct tasks the
-    /// session touched, newest activity first. Read on session open, never during
-    /// listing. Empty when there's no sidecar.
+    /// Read the `.mentes.jsonl` sidecar and return the distinct tasks it lists,
+    /// newest activity first. Read on session open, never during listing. Empty
+    /// when there's no sidecar — which is the normal case.
     func mentesTasks(forTranscript path: String) -> [MentesTask] {
         guard let data = FileManager.default.contents(atPath: mentesSidecarPath(path)),
               let text = String(data: data, encoding: .utf8) else { return [] }
@@ -158,7 +158,7 @@ struct SessionStore: Sendable {
             }
         }
         return byID.map { id, a in
-            // The Mentes Tasks app (ai.mentes.tasks, Tauri) claims this scheme.
+            // The companion task app, if installed, registers this URL scheme.
             MentesTask(taskID: id, action: a.action, date: a.date, events: a.events,
                        mentesURL: "mentes-tasks://tasks/\(id)")
         }
@@ -169,16 +169,17 @@ struct SessionStore: Sendable {
     }
 
     private func mentesSidecarPath(_ transcriptPath: String) -> String {
-        // <uuid>.jsonl → <uuid>.mentes.jsonl (sibling of the transcript)
+        // <transcript>.jsonl → <transcript>.mentes.jsonl — the transcript's own
+        // basename, not the session id (they differ for Codex rollout files).
         return siblingPath(transcriptPath, suffix: ".mentes.jsonl")
     }
 
     // MARK: Park marker
 
-    /// Read the `<id>.park.json` marker for a session, or nil when the session
-    /// isn't parked (no marker, or an aborted empty `{}` one). Cheap — the file is
-    /// a tiny single-object JSON sibling of the transcript. Used both to badge the
-    /// list (see AppState) and to show park status on open.
+    /// Read the `.park.json` marker sitting next to a session's transcript, or nil
+    /// when the session isn't parked (no marker, or an aborted empty `{}` one).
+    /// Cheap — a tiny single-object JSON file. Used both to badge the list (see
+    /// AppState) and to show park status on open.
     func parkMarker(forTranscript path: String) -> ParkMarker? {
         guard let data = FileManager.default.contents(atPath: parkMarkerPath(path)),
               let marker = try? JSONDecoder().decode(ParkMarker.self, from: data),
@@ -187,7 +188,7 @@ struct SessionStore: Sendable {
     }
 
     private func parkMarkerPath(_ transcriptPath: String) -> String {
-        // <uuid>.jsonl → <uuid>.park.json (sibling of the transcript)
+        // <transcript>.jsonl → <transcript>.park.json (sibling of the transcript)
         return siblingPath(transcriptPath, suffix: ".park.json")
     }
 
@@ -361,9 +362,9 @@ func parseISO(_ s: String?) -> Date? {
     return isoFormatter.date(from: s) ?? isoFormatterNoFraction.date(from: s)
 }
 
-/// Mentes sidecar timestamps come from Python's `isoformat()` with MICROSECOND
-/// fractions (e.g. "2026-06-22T00:01:43.309337-05:00"), which the millisecond
-/// ISO parser rejects — strip the fraction and retry so the offset still parses.
+/// Sidecar timestamps are ISO-8601, but may carry sub-millisecond fractions
+/// (e.g. "2026-06-22T00:01:43.309337-05:00") that the strict ISO parser rejects.
+/// Strip the fraction and retry so the offset still parses.
 private func parseMentesTs(_ s: String?) -> Date {
     guard let s, !s.isEmpty else { return .distantPast }
     if let d = parseISO(s) { return d }

@@ -66,10 +66,11 @@ struct SummaryResult: Decodable {
     }
 }
 
-// MARK: - Mentes task (read from the `<id>.mentes.jsonl` sidecar)
+// MARK: - Task (read from the optional `.mentes.jsonl` sidecar)
 
-/// One Mentes task a session touched, derived in-app from the session's
-/// `<id>.mentes.jsonl` sidecar (read on open by SessionStore — see there).
+/// One task a session touched, derived in-app from the optional `.mentes.jsonl`
+/// sidecar next to the transcript (read on open by SessionStore — see there).
+/// Absent for every session that has no sidecar, which is the normal case.
 struct MentesTask: Identifiable, Hashable {
     let taskID: String
     let action: String   // latest action seen ("create" | "update" | …)
@@ -81,13 +82,13 @@ struct MentesTask: Identifiable, Hashable {
     var shortID: String { String(taskID.prefix(8)) }
 }
 
-// MARK: - Park marker (read from the `<id>.park.json` sidecar)
+// MARK: - Park marker (read from the optional `.park.json` sidecar)
 
-/// A session parked as a resumable Mentes task, decoded from the authoritative
-/// `<id>.park.json` marker `session-task` writes next to the transcript. This is
-/// distinct from the `<id>.mentes.jsonl` link log (which records *every* Mentes
-/// task a session touched): the marker names the ONE park task and carries its
-/// live title/status, so it's the right source for "is this session parked?".
+/// A session parked as a resumable task, decoded from the optional `.park.json`
+/// marker written next to the transcript. Distinct from the `.mentes.jsonl` log
+/// (which records *every* task a session touched): the marker names the ONE park
+/// task and carries its live title/status, so it's the right source for "is this
+/// session parked?". Absent unless something wrote one.
 struct ParkMarker: Decodable, Equatable {
     let taskID: String?
     let title: String?
