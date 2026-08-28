@@ -33,11 +33,23 @@ struct ContentView: View {
     }
 }
 
-/// Read-only session title for the toolbar center — like an address bar showing
-/// the current page. Search is the native `.searchable` field, so there is no
+/// Read-only session title — like an address bar showing the current page. It
+/// reads as a tab hanging off the window's top edge (square at the top, rounded
+/// below) and fades away once the detail pane is scrolled: the title is
+/// orientation for the page you just opened, not a permanent fixture.
+///
+/// DetailView draws it as a top overlay rather than a `ToolbarItem`. As a
+/// toolbar item the system paints its own fixed-width capsule that the title
+/// spilled out of, and hiding that capsule
+/// (`sharedBackgroundVisibility(.hidden)`) turned the whole toolbar band opaque
+/// gray. Search is a separate collapsing toolbar control, so there's no
 /// editable-field / focus logic here at all (that's what kept breaking).
 struct OmniBar: View {
     @EnvironmentObject var app: AppState
+
+    private static let cornerRadius: CGFloat = 18
+    private static let maxWidth: CGFloat = 620
+    private static let hPadding: CGFloat = 26
 
     var body: some View {
         Group {
@@ -51,17 +63,43 @@ struct OmniBar: View {
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                 }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 5)
-                .frame(maxWidth: 460)
+                // Width is measured, not `maxWidth:` — a flexible frame fills
+                // all 620pt even for a three-word title, leaving a wide empty
+                // plate. This hugs the text and caps long titles (which then
+                // truncate inside).
+                .frame(width: plateWidth(title: s.displayTitle, subtitle: subtitle(s)))
             } else {
                 Text("Recall")
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundStyle(.secondary)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 5)
             }
         }
+        .padding(.horizontal, Self.hPadding)
+        .padding(.top, 12)
+        .padding(.bottom, 11)
+        .background {
+            let plate = UnevenRoundedRectangle(topLeadingRadius: 0,
+                                               bottomLeadingRadius: Self.cornerRadius,
+                                               bottomTrailingRadius: Self.cornerRadius,
+                                               topTrailingRadius: 0,
+                                               style: .continuous)
+            plate
+                .fill(Color(nsColor: .textBackgroundColor))
+                .overlay { plate.strokeBorder(Color.hairline, lineWidth: 1) }
+                .shadow(color: .black.opacity(0.06), radius: 6, y: 2)
+        }
+        .transition(.opacity)
+    }
+
+    /// Ideal text width, capped — measured with the same fonts the labels use.
+    private func plateWidth(title: String, subtitle: String) -> CGFloat {
+        let titleWidth = NSAttributedString(
+            string: title,
+            attributes: [.font: NSFont.systemFont(ofSize: 14, weight: .semibold)]).size().width
+        let subtitleWidth = NSAttributedString(
+            string: subtitle,
+            attributes: [.font: NSFont.systemFont(ofSize: 11)]).size().width
+        return min(ceil(max(titleWidth, subtitleWidth)) + 1, Self.maxWidth - 2 * Self.hPadding)
     }
 
     private func subtitle(_ s: SessionMeta) -> String {

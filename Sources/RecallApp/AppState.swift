@@ -19,6 +19,11 @@ final class AppState: ObservableObject {
     var lastRealFilter: SidebarItem = .tool(.claude)
     @Published var searchFocusRequested = false   // ⌘K → focus the search field
 
+    /// True once the detail column has been scrolled past the header threshold.
+    /// The toolbar title fades out so reading gets the full window height back;
+    /// scrolling back to the top brings it right back.
+    @Published var titleCollapsed = false
+
     /// Persisted across open/close so reopening Usage is instant (the model's
     /// `loaded` guard skips the refetch).
     let usage = UsageModel()
@@ -340,6 +345,16 @@ final class AppState: ObservableObject {
             self.sessionInsights = built.insights
             self.transcriptLoading = false
         }
+    }
+
+    // MARK: Toolbar title collapse
+
+    /// Animated setter for `titleCollapsed`, called from the detail column's
+    /// scroll tracking (which fires continuously — the guard keeps SwiftUI from
+    /// re-publishing on every pixel).
+    func setTitleCollapsed(_ collapsed: Bool) {
+        guard collapsed != titleCollapsed else { return }
+        withAnimation(.easeOut(duration: 0.18)) { titleCollapsed = collapsed }
     }
 
     // MARK: Pin

@@ -3,7 +3,7 @@ import AppKit
 
 /// Search text in isolation. Held by SessionListView via @State (NOT observed),
 /// so typing re-renders only SessionListContent (which @ObservedObject's it),
-/// never the toolbar host — that's what keeps the NSSearchField from being
+/// never the toolbar host — that's what keeps the search field from being
 /// recreated and losing focus on every keystroke.
 final class SearchModel: ObservableObject {
     @Published var text = ""
@@ -12,22 +12,233 @@ final class SearchModel: ObservableObject {
 struct SessionListView: View {
     @EnvironmentObject var app: AppState
     @State private var search = SearchModel()     // @State = hold, don't observe
-    @State private var searchPresented = false
-
-    private var searchBinding: Binding<String> {
-        Binding(get: { search.text }, set: { search.text = $0 })
-    }
+    @State private var searchExpanded = false
 
     var body: some View {
         SessionListContent(search: search)
             .background(Color(nsColor: .windowBackgroundColor))
-            // Apple's native search field — the only reliable toolbar search
-            // (it survives the list re-rendering). Apple places it top-right.
-            .searchable(text: searchBinding, isPresented: $searchPresented,
-                        placement: .toolbar, prompt: "Search title or project")
-            .onChange(of: app.searchFocusRequested) { _, req in   // ⌘K
-                if req { searchPresented = true; app.searchFocusRequested = false }
+            // Search collapses to a magnifying glass until it's used — an idle
+            // text box was eating toolbar width the title wants. `.searchable`
+            // can't do this on macOS (`.searchToolbarBehavior(.minimize)` is
+            // iOS-only), so this is a hand-rolled equivalent.
+            .toolbar {
+                ToolbarItem(placement: .primaryAction) {
+                    SearchControl(model: search, expanded: $searchExpanded)
+                }
             }
+            .onChange(of: app.searchFocusRequested) { _, req in   // ⌘K
+                if req { searchExpanded = true; app.searchFocusRequested = false }
+            }
+    }
+}
+
+/// Collapsing toolbar search: a magnifying-glass button that expands into a
+/// search field, all in ONE AppKit view.
+///
+/// It's deliberately not SwiftUI. Two things fail inside an `NSToolbar` item:
+/// `@FocusState` never takes hold (⌘K expanded an unfocused box and swallowed
+/// the keystrokes), and swapping the item's content between two SwiftUI views
+/// leaves the tap gesture dead afterwards — the icon still highlights on hover
+/// but clicks do nothing. One NSView with a stable identity, doing its own
+/// focus and hit-testing, has neither problem.
+private struct SearchControl: View {
+    let model: SearchModel                  // written to, never observed
+    @Binding var expanded: Bool
+    @State private var text = ""
+
+    var body: some View {
+        CollapsingSearchBar(text: $text, expanded: $expanded)
+            .onChange(of: text) { _, new in model.text = new }
+            .help("Search sessions (⌘K)")
+    }
+}
+
+private struct CollapsingSearchBar: NSViewRepresentable {
+    @Binding var text: String
+    @Binding var expanded: Bool
+
+    func makeNSView(context: Context) -> CollapsingSearchView {
+        let view = CollapsingSearchView()
+        view.onTextChange = { context.coordinator.parent.text = $0 }
+        view.onExpandedChange = { context.coordinator.parent.expanded = $0 }
+        return view
+    }
+
+    func updateNSView(_ view: CollapsingSearchView, context: Context) {
+        context.coordinator.parent = self
+        if view.field.stringValue != text { view.field.stringValue = text }
+        view.setExpanded(expanded)
+    }
+
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView: CollapsingSearchView,
+                      context: Context) -> CGSize? {
+        nsView.intrinsicContentSize
+    }
+
+    static func dismantleNSView(_ view: CollapsingSearchView, coordinator: Coordinator) {
+        view.stopWatchingForOutsideClicks()
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator(self) }
+
+    final class Coordinator {
+        var parent: CollapsingSearchBar
+        init(_ parent: CollapsingSearchBar) { self.parent = parent }
+    }
+}
+
+/// The button + field pair. SwiftUI owns `expanded`; every AppKit-side collapse
+/// (Esc, a click elsewhere) reports back up through `onExpandedChange` rather
+/// than flipping state locally, so the two can't drift.
+final class CollapsingSearchView: NSView, NSSearchFieldDelegate {
+    private static let collapsedWidth: CGFloat = 28
+    private static let expandedWidth: CGFloat = 210
+    private static let height: CGFloat = 24
+
+    let field = NSSearchField()
+    private let button = NSButton()
+    private var isExpanded = false
+    private var outsideClickMonitor: Any?
+    private var hovering = false
+
+    var onTextChange: ((String) -> Void)?
+    var onExpandedChange: ((Bool) -> Void)?
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+
+        button.image = NSImage(systemSymbolName: "magnifyingglass",
+                               accessibilityDescription: "Search sessions")
+        button.imagePosition = .imageOnly
+        button.isBordered = false
+        button.contentTintColor = .secondaryLabelColor
+        button.target = self
+        button.action = #selector(expandFromButton)
+        addSubview(button)
+
+        field.delegate = self
+        field.placeholderString = "Search title or project"
+        field.font = .systemFont(ofSize: 13)
+        field.focusRingType = .none
+        field.sendsSearchStringImmediately = true
+        field.sendsWholeSearchString = false
+        field.isHidden = true
+        addSubview(field)
+
+        addTrackingArea(NSTrackingArea(rect: .zero,
+                                       options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect],
+                                       owner: self))
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) unavailable") }
+
+    override var intrinsicContentSize: NSSize {
+        NSSize(width: isExpanded ? Self.expandedWidth : Self.collapsedWidth, height: Self.height)
+    }
+
+    override func layout() {
+        super.layout()
+        button.frame = bounds
+        field.frame = bounds
+    }
+
+    // MARK: Expand / collapse
+
+    func setExpanded(_ expand: Bool) {
+        guard expand != isExpanded else { return }
+        isExpanded = expand
+        field.isHidden = !expand
+        button.isHidden = expand
+        invalidateIntrinsicContentSize()
+        if expand {
+            // The field is only in the window once this layout pass commits.
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.window?.makeFirstResponder(self.field)
+            }
+            startWatchingForOutsideClicks()
+        } else {
+            stopWatchingForOutsideClicks()
+            // End editing for real. Just hiding the field leaves its field
+            // editor as first responder, which paints a stray blinking caret
+            // next to the collapsed magnifying glass.
+            field.abortEditing()
+            if let responder = window?.firstResponder as? NSView,
+               responder === field || responder.isDescendant(of: field) {
+                window?.makeFirstResponder(nil)
+            }
+        }
+        needsDisplay = true
+    }
+
+    @objc private func expandFromButton() {
+        onExpandedChange?(true)
+    }
+
+    /// Esc, or the field's own clear button, drops the filter *and* the field.
+    /// Collapsing with a query still live would leave the list mysteriously
+    /// short with nothing on screen to explain it.
+    private func clearAndCollapse() {
+        field.stringValue = ""
+        onTextChange?("")
+        onExpandedChange?(false)
+    }
+
+    // MARK: Outside clicks
+    //
+    // `controlTextDidEndEditing` isn't enough on its own: a click on something
+    // that doesn't take first responder (most of this window's chrome) leaves
+    // the field focused, so the box just sat there open.
+
+    private func startWatchingForOutsideClicks() {
+        guard outsideClickMonitor == nil else { return }
+        outsideClickMonitor = NSEvent.addLocalMonitorForEvents(
+            matching: [.leftMouseDown, .rightMouseDown]
+        ) { [weak self] event in
+            guard let self, self.isExpanded, event.window === self.window else { return event }
+            let pointInView = self.convert(event.locationInWindow, from: nil)
+            if !self.bounds.contains(pointInView) && self.field.stringValue.isEmpty {
+                self.onExpandedChange?(false)
+            }
+            return event
+        }
+    }
+
+    func stopWatchingForOutsideClicks() {
+        if let monitor = outsideClickMonitor { NSEvent.removeMonitor(monitor) }
+        outsideClickMonitor = nil
+    }
+
+    // MARK: Hover
+
+    override func mouseEntered(with event: NSEvent) {
+        hovering = true
+        button.contentTintColor = .labelColor
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        hovering = false
+        button.contentTintColor = .secondaryLabelColor
+    }
+
+    // MARK: NSSearchFieldDelegate
+
+    func controlTextDidChange(_ note: Notification) {
+        onTextChange?(field.stringValue)
+    }
+
+    func controlTextDidEndEditing(_ note: Notification) {
+        if field.stringValue.isEmpty { onExpandedChange?(false) }
+    }
+
+    func control(_ control: NSControl, textView: NSTextView,
+                 doCommandBy selector: Selector) -> Bool {
+        if selector == #selector(NSResponder.cancelOperation(_:)) {
+            clearAndCollapse()
+            return true
+        }
+        return false
     }
 }
 
