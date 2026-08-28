@@ -60,6 +60,7 @@ struct DetailView: View {
             .padding(.trailing, 46)
             .padding(.vertical, 28)
         }
+        .scrollIndicators(.never)
         // Fade the title plate out once reading starts.
         .modifier(ScrollOffsetReporter { app.setTitleCollapsed($0 > 36) })
         // A new session (or coming back from Usage) starts at the top again —

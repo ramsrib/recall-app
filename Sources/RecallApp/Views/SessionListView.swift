@@ -13,17 +13,29 @@ struct SessionListView: View {
     @EnvironmentObject var app: AppState
     @State private var search = SearchModel()     // @State = hold, don't observe
     @State private var searchExpanded = false
+    @State private var columnWidth: CGFloat = 380
 
     var body: some View {
         SessionListContent(search: search)
             .background(Color(nsColor: .windowBackgroundColor))
+            // Measure the column so the expanded search can span it — the
+            // toolbar item can't see how wide its column is on its own.
+            .background(
+                GeometryReader { geo in
+                    Color.clear.preference(key: ListColumnWidth.self, value: geo.size.width)
+                }
+            )
+            .onPreferenceChange(ListColumnWidth.self) { width in
+                Task { @MainActor in columnWidth = width }
+            }
             // Search collapses to a magnifying glass until it's used — an idle
             // text box was eating toolbar width the title wants. `.searchable`
             // can't do this on macOS (`.searchToolbarBehavior(.minimize)` is
             // iOS-only), so this is a hand-rolled equivalent.
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
-                    SearchControl(model: search, expanded: $searchExpanded)
+                    SearchControl(model: search, expanded: $searchExpanded,
+                                  expandedWidth: max(180, columnWidth - 44))
                 }
             }
             .onChange(of: app.searchFocusRequested) { _, req in   // ⌘K
@@ -44,10 +56,11 @@ struct SessionListView: View {
 private struct SearchControl: View {
     let model: SearchModel                  // written to, never observed
     @Binding var expanded: Bool
+    let expandedWidth: CGFloat
     @State private var text = ""
 
     var body: some View {
-        CollapsingSearchBar(text: $text, expanded: $expanded)
+        CollapsingSearchBar(text: $text, expanded: $expanded, expandedWidth: expandedWidth)
             .onChange(of: text) { _, new in model.text = new }
             .help("Search sessions (⌘K)")
     }
@@ -56,6 +69,7 @@ private struct SearchControl: View {
 private struct CollapsingSearchBar: NSViewRepresentable {
     @Binding var text: String
     @Binding var expanded: Bool
+    let expandedWidth: CGFloat
 
     func makeNSView(context: Context) -> CollapsingSearchView {
         let view = CollapsingSearchView()
@@ -67,6 +81,7 @@ private struct CollapsingSearchBar: NSViewRepresentable {
     func updateNSView(_ view: CollapsingSearchView, context: Context) {
         context.coordinator.parent = self
         if view.field.stringValue != text { view.field.stringValue = text }
+        view.expandedWidth = expandedWidth
         view.setExpanded(expanded)
     }
 
@@ -92,8 +107,13 @@ private struct CollapsingSearchBar: NSViewRepresentable {
 /// than flipping state locally, so the two can't drift.
 final class CollapsingSearchView: NSView, NSSearchFieldDelegate {
     private static let collapsedWidth: CGFloat = 28
-    private static let expandedWidth: CGFloat = 210
     private static let height: CGFloat = 24
+
+    /// How wide the field runs once open — the session list column's width,
+    /// handed down from SwiftUI.
+    var expandedWidth: CGFloat = 210 {
+        didSet { if expandedWidth != oldValue, isExpanded { invalidateIntrinsicContentSize() } }
+    }
 
     let field = NSSearchField()
     private let button = NSButton()
@@ -134,7 +154,7 @@ final class CollapsingSearchView: NSView, NSSearchFieldDelegate {
     required init?(coder: NSCoder) { fatalError("init(coder:) unavailable") }
 
     override var intrinsicContentSize: NSSize {
-        NSSize(width: isExpanded ? Self.expandedWidth : Self.collapsedWidth, height: Self.height)
+        NSSize(width: isExpanded ? expandedWidth : Self.collapsedWidth, height: Self.height)
     }
 
     override func layout() {
@@ -242,6 +262,13 @@ final class CollapsingSearchView: NSView, NSSearchFieldDelegate {
     }
 }
 
+/// Width of the session list column, reported up so the toolbar's search field
+/// can match it when expanded.
+private struct ListColumnWidth: PreferenceKey {
+    static var defaultValue: CGFloat = 380
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
+}
+
 struct SessionListContent: View {
     @EnvironmentObject var app: AppState
     @ObservedObject var search: SearchModel
@@ -315,6 +342,10 @@ struct SessionListContent: View {
                     }
                 }
             }
+            // The overlay scroller was the loudest thing in a quiet column.
+            // `.never`, not `.hidden`: hidden still lets the scroller flash in
+            // during a scroll.
+            .scrollIndicators(.never)
             .focusable()
             .focusEffectDisabled()
             .focused($listFocused)
@@ -325,9 +356,14 @@ struct SessionListContent: View {
                 default:    break
                 }
             }
-            .onChange(of: app.selectedID) { _, id in
+            // Scroll only for selections that may be off-screen (keyboard nav,
+            // deep links). Doing it for every selectedID change re-centered the
+            // row the user had just clicked, shifting the whole list under the
+            // cursor mid-click.
+            .onChange(of: app.revealRequest) { _, id in
                 guard let id else { return }
                 withAnimation(.easeOut(duration: 0.15)) { proxy.scrollTo(id, anchor: .center) }
+                app.revealRequest = nil
             }
         }
     }

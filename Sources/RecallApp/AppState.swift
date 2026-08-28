@@ -31,6 +31,12 @@ final class AppState: ObservableObject {
     // Selection
     @Published var selectedID: String?
 
+    /// A session the list should scroll into view. Set only when the selection
+    /// came from somewhere the row may be off-screen — keyboard nav, a deep
+    /// link — never from a click: scrolling a row the user just clicked yanks
+    /// the list out from under them.
+    @Published var revealRequest: String?
+
     /// A `recall://session/<id>` opened before the index finished loading.
     /// Applied at the end of `load()` so it wins over the auto-select default.
     private var pendingDeepLinkID: String?
@@ -144,10 +150,10 @@ final class AppState: ObservableObject {
         guard !flat.isEmpty else { return }
         guard let cur = selectedID,
               let idx = flat.firstIndex(where: { $0.sessionID == cur }) else {
-            select(flat[0].sessionID); return
+            select(flat[0].sessionID, reveal: true); return
         }
         let next = min(max(idx + delta, 0), flat.count - 1)
-        if flat[next].sessionID != cur { select(flat[next].sessionID) }
+        if flat[next].sessionID != cur { select(flat[next].sessionID, reveal: true) }
     }
 
     // MARK: List
@@ -200,9 +206,12 @@ final class AppState: ObservableObject {
 
     // MARK: Selection
 
-    func select(_ id: String) {
+    func select(_ id: String, reveal: Bool = false) {
         // Opening a session leaves Usage mode so the detail shows the session.
         if sidebarItem == .usage { sidebarItem = lastRealFilter }
+        // Before the guard: a deep link to the already-selected session should
+        // still scroll its row into view.
+        if reveal { revealRequest = id }
         guard id != selectedID else { return }
         selectedID = id
         summary = nil
@@ -285,7 +294,7 @@ final class AppState: ObservableObject {
             return
         }
         sidebarItem = target.isExec ? .automation : .all
-        select(id)
+        select(id, reveal: true)
     }
 
     // MARK: Glance summary
