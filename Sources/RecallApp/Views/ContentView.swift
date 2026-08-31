@@ -159,6 +159,7 @@ struct FilterSidebar: View {
             }
         }
         .tint(.primary)
+        .scrollIndicators(.never)          // same quiet treatment as the other columns
         // Only a transient status strip while indexing — the reindex action now
         // lives in the window toolbar.
         .safeAreaInset(edge: .bottom) { if app.isIndexing { footer } }

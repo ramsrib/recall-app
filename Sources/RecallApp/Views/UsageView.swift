@@ -32,6 +32,7 @@ struct UsageView: View {
             .padding(.horizontal, 36)
             .padding(.vertical, 28)
         }
+        .scrollIndicators(.never)
         .background(Color(nsColor: .textBackgroundColor))
         .navigationTitle("Usage")
         .toolbar {
